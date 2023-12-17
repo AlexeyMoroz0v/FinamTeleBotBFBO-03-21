@@ -266,9 +266,4 @@ def get_stat(message):
         bot.send_message(user_id, 'Статистика еще не собрана. Попробуйте позже.')
 
 
-
-async def main():
-    asyncio.run(bot.infinity_polling())
-
-if __name__ == "__main__":
-    asyncio.run(main())
+bot.polling(non_stop=True)

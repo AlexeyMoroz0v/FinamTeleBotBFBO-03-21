@@ -1,7 +1,5 @@
-import asyncio
-import sys
-import signal
 import pandas as pd
+import asyncio
 import telebot
 import os
 from telebot import types
@@ -11,9 +9,11 @@ import os.path
 from Bars_graph import plot_trades
 from PIL import Image
 import Live_strategy
+import sys
+import signal
 
 bot = telebot.TeleBot(Config.Telegram_Token)
-
+shutdown_flag = False
 user_data = {}
 
 stock_codes = {
@@ -46,7 +46,7 @@ async def save_user_data_to_file(message):
             new_data = pd.DataFrame([user_data[user_id]])
             print(new_data)
             new_data.index = new_data['user_id']
-            new_data = new_data[['client_id', 'api_key', 'ticker', 'security_board', 'trading_amount']]
+            new_data = new_data[['client_id', 'api_key', 'share', 'trading_amount']]
             if file_exists:  # Если файл существует
                 # Загружаем существующие данные из файла
                 existing_data = pd.read_csv(file_name, sep='\t', index_col='user_id')
@@ -54,7 +54,7 @@ async def save_user_data_to_file(message):
                     keep='last').sort_index()  # Объединяем файл с данными из Finam, убираем дубликаты, сортируем заново
             # Сохраняем обновленные данные в файл
             new_data.to_csv(file_name, sep='\t')
-            bot.send_message(user_id, 'Ваши данные успешно сохранены.\nДля списка команд введите /help')
+            bot.send_message(user_id, 'Ваши данные успешно сохранены.')
         else:
             bot.send_message(user_id, 'Произошла ошибка. Попробуйте заново.')
     except ValueError:
@@ -78,13 +78,12 @@ def set_trading_amount(message):
 # Обработчик текстовых сообщений
 @bot.message_handler(content_types=['text'])
 def handle_messages(message):
-
     if '/start' in message.text:
         start(message)
     elif '/run' in message.text:
         run(message)
     elif '/shutdown' in message.text:
-        shutdown(message)
+        shutdown_command(message)
     elif '/stat' in message.text:
         get_stat(message)
     elif '/graph' in message.text:
@@ -101,29 +100,27 @@ def handle_messages(message):
         process_command(message)
 
 
+@bot.message_handler(commands=['shutdown'])
+def shutdown_command(message):
+    user_id = message.chat.id
+    global shutdown_flag
+    user_id = message.chat.id
+    bot.send_message(user_id, 'Shutting down...')
+    shutdown_flag = True
+    bot.stop_bot()
 # Обработчик команды /help
 @bot.message_handler(commands=['help'])
 def help_command(message):
     user_id = message.chat.id
     bot.send_message(user_id, f'Список команд:\n'
-                            f'/start - запуск бота\n'
-                            f'/set_id - ввод вашего торгового счёта\n'
-                            f'/set_api - ввод вашего API ключа\n'
-                            f'/set_stock - ввод акции для торговли и баланса\n'
-                            f'/graph - вывод графика акции\n'
-                            f'/stat - вывод статистики\n'
-                            f'/run - запуск торговли\n'
-                            f'/shutdown - завершение торговли\n')
-
-
-@bot.message_handler(commands=['shutdown'])
-def shutdown(message):
-    user_id = message.chat.id
-
-    bot.stop_bot()
-    # По завершении бота отправляем сигнал завершения всем процессам
-    os.kill(os.getpid(), signal.SIGINT)
-    sys.exit()
+                              f'/start - запуск бота\n'
+                              f'set_id - ввод вашего торгового счёта\n'
+                              f'/set_api - ввод вашего API ключа\n'
+                              f'/set_stock - ввод акции для торговли и баланса\n'
+                              f'/graph - вывод графика акции\n'
+                              f'/stat - вывод статистики\n'
+                              f'/run - запуск торговли\n'
+                              f'/shutdown - остановка торговли')
 
 
 # Обработчик команды /start
@@ -266,4 +263,13 @@ def get_stat(message):
         bot.send_message(user_id, 'Статистика еще не собрана. Попробуйте позже.')
 
 
-bot.polling(non_stop=True)
+# Loop for fetching messages
+while not shutdown_flag:
+    try:
+        bot.polling()
+    except Exception as e:
+        print(f"Error: {e}")
+        # Handle exceptions as needed, e.g., sleep before trying again
+
+# Cleanup code if needed
+print("Bot has been shut down.")

@@ -22,14 +22,14 @@ active_strategies = {}  # Словарь для отслеживания акт�
 user_message = {}
 graph_user_data = {}
 user_data = {}
+task = {}
+model = load_model(os.path.join("NN_winner", "cnn_Open.hdf5"))
 
 
 async def read_file_async(file_path):
     async with aiofiles.open(file_path, mode='r') as file:
         content = await file.read()
         return content
-
-flag = True
 
 
 class LiveStrategy:
@@ -55,6 +55,7 @@ class LiveStrategy:
         self.portfolio = self.balance
         self.stop_loss = float
         self.trade_data_container = []
+        self.stop_event = asyncio.Event()
 
     async def add_buy_data(self, timestamp, price, quantity):
         # Метод для добавления данных о покупке в контейнер
@@ -163,9 +164,22 @@ class LiveStrategy:
                 await asyncio.sleep(60)
         return is_trading_hours
 
-    async def main_cycle(self, model, fp_provider):
-        if await self.ensure_market_open():
-            while flag:
+    async def stop_strategy(self):
+        self.stop_event.set()  # Set the event to signal stopping
+        await task[self.user_id]  # Wait for the task to finish
+
+    async def start_strategy(self):
+        fp_provider = FinamPy(Config.AccessToken)
+        decimals = 0
+        securities = fp_provider.symbols  # Получаем справочник всех тикеров из провайдера
+        # print('Ответ от сервера:', securities)
+        if securities:  # Если получили тикеры
+            si = next(
+                item for item in securities.securities if item.board == self.security_board and item.code == self.ticker)
+            self.scale = -(si.decimals + decimals)  # Кол-во десятичных знаков
+        await self.bars_data(fp_provider)
+        while not self.stop_event.is_set():
+            if await self.ensure_market_open():
                 try:
                     user_message[self.user_id] = f'Цена покупки: {self.ask_price if not np.isnan(self.ask_price) else None}\n' \
                                         f'Количество купленных акций: {self.counter}\n' \
@@ -189,30 +203,21 @@ class LiveStrategy:
                     logger.error("Client error %s", are)
 
                 await asyncio.sleep(self.check_interval)
-        else:
-            await asyncio.sleep(60)
-
-    async def start_strategy(self):
-        fp_provider = FinamPy(Config.AccessToken)
-
-        decimals = 0
-        securities = fp_provider.symbols  # Получаем справочник всех тикеров из провайдера
-        # print('Ответ от сервера:', securities)
-        if securities:  # Если получили тикеры
-            si = next(
-                item for item in securities.securities if item.board == self.security_board and item.code == self.ticker)
-            self.scale = -(si.decimals + decimals)  # Кол-во десятичных знаков
-        await self.bars_data(fp_provider)
-        model = load_model(os.path.join("NN_winner", "cnn_Open.hdf5"))
-        await self.main_cycle(model=model, fp_provider=fp_provider)
-
-# def get_flag(message):
+            else:
+                await asyncio.sleep(60)
+        print('Стратегия завершила работу')
 
 
 async def run_strategy(strategy):
-    while True:
-        await strategy.start_strategy()
-        await asyncio.sleep(10)
+    await strategy.start_strategy()
+
+
+async def handle_command_stop_strategy(user_id):
+    if user_id in active_strategies:
+        strategy = active_strategies[user_id]
+        await strategy.stop_strategy()
+        del active_strategies[user_id]
+        del task[user_id]
 
 
 async def handle_command_activate_strategy(user_id):
@@ -242,7 +247,6 @@ async def handle_command_activate_strategy(user_id):
             client_id=user_cfg['client_id'],
             balance=user_cfg['trading_amount']
         )
-
     strategy = active_strategies[user_id]
     task = asyncio.create_task(run_strategy(strategy))
     await task
@@ -250,7 +254,7 @@ async def handle_command_activate_strategy(user_id):
 
 async def main():
     # Пример обработки команды от пользователя в телеграм-боте
-    user_id_to_activate = "Jonn8J"
+    user_id_to_activate = 1730551904
     await handle_command_activate_strategy(user_id_to_activate)
 
 if __name__ == "__main__":
